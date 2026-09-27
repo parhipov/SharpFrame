@@ -1,0 +1,17 @@
+{
+  "options": {
+    "output_folder": "",
+    "search_window_seconds": 0.12,
+    "max_frames_to_merge": 9,
+    "min_relative_sharpness": 0.75,
+    "merge_tolerance": 1.0,
+    "soft": false,
+    "motion_seconds": 0,
+    "motion_when": "before",
+    "motion_focus": "",
+    "sharpen_amount": 0.6,
+    "sharpen_radius_px": 1.0,
+    "lut_file": "",
+    "save_single_frame": false
+  }
+}

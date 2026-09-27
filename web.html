@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SharpFrame</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6a66; --line: #e3e1dc;
+  --accent: #2d6cdf; --accent-text: #ffffff; --drop: #eef3fd; --bad: #c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615; --panel: #1f1f1e; --text: #ecebe7; --muted: #9a9892; --line: #33322f;
+    --accent: #5b8def; --accent-text: #0e0e0d; --drop: #1d2433; --bad: #e57368;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; }
+header p { margin: 0; color: var(--muted); }
+header a { margin-left: auto; color: var(--accent); cursor: pointer; text-decoration: none; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+#drop { display: grid; place-items: center; text-align: center; min-height: 260px; border: 2px dashed var(--line);
+  border-radius: 12px; background: var(--panel); cursor: pointer; transition: background .15s, border-color .15s; }
+#drop.over { background: var(--drop); border-color: var(--accent); }
+#drop b { display: block; font-size: 18px; margin-bottom: 6px; }
+#drop span { color: var(--muted); }
+#player video, #player img { display: block; width: 100%; max-height: 62vh; background: #000; border-radius: 8px; object-fit: contain; }
+#scrub { width: 100%; margin: 10px 0 0; }
+.bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.bar .grow { flex: 1; }
+input[type=text] { font: inherit; width: 8.5em; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--text); font-variant-numeric: tabular-nums; }
+button, .btn { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--text); cursor: pointer; text-decoration: none; display: inline-block; user-select: none; }
+button:hover, .btn:hover { border-color: var(--muted); }
+button.main { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; padding: 8px 18px; }
+button:disabled { opacity: .5; cursor: default; }
+.status { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.status.bad { color: var(--bad); }
+progress { width: 160px; height: 6px; accent-color: var(--accent); }
+#results { display: grid; gap: 16px; margin-top: 16px; }
+#results > * { min-width: 0; }   /* a card zoomed in must not widen to its photo */
+.pic { position: relative; }
+.card img { display: block; width: 100%; border-radius: 8px; background: #000; cursor: zoom-in; }
+.card.motion img { cursor: crosshair; }
+.ring { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 3px solid #ffd400;
+  border-radius: 50%; box-shadow: 0 0 0 1px #0008; pointer-events: none; }
+#expo { width: 130px; accent-color: var(--accent); }
+select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+.pic.zoom { overflow: hidden; border-radius: 8px; background: #000; cursor: grab; touch-action: none; }
+.pic.zoom img { max-width: none; border-radius: 0; cursor: grab; user-select: none; -webkit-user-drag: none; }
+.pic.zoom .ring { display: none; }
+.card .meta { color: var(--muted); font-size: 13px; }
+.card .file { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.card .wait { display: grid; place-items: center; aspect-ratio: 16 / 9; border-radius: 8px; background: var(--bg); color: var(--muted); }
+.spin { width: 28px; height: 28px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%;
+  animation: spin 1s linear infinite; margin: 0 auto 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted); }
+.together { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+.toggle input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; background: var(--bg);
+  font-variant-numeric: tabular-nums; font-size: 13px; }
+.chip span { padding: 4px 4px 4px 10px; cursor: pointer; }
+.chip b { padding: 4px 9px 4px 4px; cursor: pointer; color: var(--muted); font-weight: 400; }
+.chip b:hover { color: var(--bad); }
+.hidden { display: none !important; }
+kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>SharpFrame</h1>
+    <p id="tagline"></p>
+    <a id="change" class="hidden"></a>
+  </header>
+
+  <label id="drop">
+    <input id="file" type="file" accept="video/*,.mp4,.mov,.mkv,.avi,.m4v" hidden>
+    <div><b id="dropTitle"></b><span id="dropHint"></span></div>
+  </label>
+
+  <section id="work" class="panel hidden">
+    <div id="player">
+      <video id="video" controls playsinline preload="auto"></video>
+      <img id="still" class="hidden" alt="">
+      <input id="scrub" class="hidden" type="range" min="0" step="0.001" value="0">
+    </div>
+    <div class="bar">
+      <button id="back" title=",">◀</button>
+      <input id="time" type="text" value="0:00.00" spellcheck="false">
+      <button id="fwd" title=".">▶</button>
+      <button id="take" class="main"></button>
+      <button id="add" title="+"></button>
+      <label class="toggle" id="softBox"><input id="soft" type="checkbox"> <span id="softLabel"></span></label>
+      <!-- one block: the switch and its exposure wrap to the next line together -->
+      <span class="together">
+        <label class="toggle" id="motionBox"><input id="motion" type="checkbox"> <span id="motionLabel"></span></label>
+        <span id="expoBox" class="toggle hidden"><input id="expo" type="range" min="0" max="15" step="1" value="9">
+          <span id="expoLabel"></span>
+          <select id="when"><option value="before"></option><option value="around"></option><option value="after"></option></select></span>
+      </span>
+      <span class="grow"></span>
+      <progress id="prog" max="1" value="0"></progress>
+      <span id="status" class="status"></span>
+    </div>
+    <div id="list" class="bar hidden">
+      <span id="chips" class="chips grow"></span>
+      <button id="takeAll" class="main"></button>
+      <button id="clear"></button>
+    </div>
+    <div class="status" id="keys" style="margin-top:8px"></div>
+  </section>
+
+  <section id="results"></section>
+</main>
+
+<script>
+const RU = (navigator.language || '').toLowerCase().startsWith('ru');
+const T = RU ? {
+  tagline: 'резкое фото из видео: самый чёткий кадр рядом с моментом, очищенный соседними',
+  dropTitle: 'Перетащите видео сюда', dropHint: 'или нажмите, чтобы выбрать файл',
+  take: 'Сделать фото', add: 'Добавить в список', takeAll: (n) => `Сделать все (${n})`, clear: 'Очистить', soft: 'Мягко', softHint: 'смелее усреднять соседние кадры: мягкая, «ламповая» картинка', change: 'Другое видео', save: 'Сохранить JPEG', asis: 'Кадр как есть',
+  queued: (n) => `в очереди: ${n}`,
+  loupe: 'Лупа', loupeHint: 'тянуть мышью — смотреть по фото, держать пробел — кадр как есть, щелчок или Esc — выйти',
+  up: 'загрузка', ready: 'готово', waitUp: 'ждём загрузку видео…', working: 'обработка…',
+  keys: 'Найдите момент и нажмите «Сделать фото». <kbd>,</kbd> <kbd>.</kbd> — кадр назад / вперёд, <kbd>Enter</kbd> — фото, <kbd>+</kbd> — в список. На готовом фото с движением щёлкните место, которое должно остаться резким.',
+  noplay: 'браузер не показывает это видео — кадры с сервера',
+  file: (r) => `${r.format} · качество ${r.quality} · ${mb(r.bytes)} МБ · ${r.w}×${r.h}`,
+  meta: (r) => `${fmt(r.t)} · ` + (r.ref === 0 ? 'взят кадр ровно в этот момент: он самый резкий рядом'
+    : `взят кадр на ${Math.abs(r.ref)} ${frames(Math.abs(r.ref))} ${r.ref > 0 ? 'позже' : 'раньше'} (${shift(r.ref)} с)` +
+      (r.rel != null ? `: он на ${sharper(r.rel)} % резче кадра в момент` : '')) +
+    (r.depth < 1.5 ? ' · соседние кадры не совпали, шум не трогали' : ` · шум убран по ~${Math.round(r.depth)} кадрам`) +
+    (r.soft ? ' · мягко' : ''),
+  motion: 'Движение', motionHint: 'длинная выдержка до момента: движущееся смазано, стоящее в кадре — резкое',
+  expo: (s) => `выдержка ${expo(s)} с`,
+  when: { before: 'до момента', around: 'до и после', after: 'после момента' },
+  mot: (r) => ` · движение ${expo(r.motion)} с ${T.when[r.when]}` + (r.focus ? ' · резкость по точке' : ''),
+  clickHint: 'щёлкните по фото — это место станет резким',
+  bad: 'ошибка: ',
+  lost: 'связь с SharpFrame прервалась — окно программы закрыто? Запустите SharpFrame.bat и обновите страницу',
+} : {
+  tagline: 'a sharp photo from a video: the crispest frame near the moment, cleaned up with its neighbours',
+  dropTitle: 'Drop a video here', dropHint: 'or click to choose a file',
+  take: 'Take photo', add: 'Add to list', takeAll: (n) => `Take all (${n})`, clear: 'Clear', soft: 'Soft', softHint: 'merge the neighbours more boldly: a smoother, dreamier look', change: 'Another video', save: 'Save JPEG', asis: 'Frame as is',
+  queued: (n) => `queued: ${n}`,
+  loupe: 'Zoom', loupeHint: 'drag to look round, hold Space for the frame as is, click or Esc to leave',
+  up: 'uploading', ready: 'ready', waitUp: 'waiting for the upload…', working: 'working…',
+  keys: 'Find the moment and press “Take photo”. <kbd>,</kbd> <kbd>.</kbd> — frame back / forward, <kbd>Enter</kbd> — photo, <kbd>+</kbd> — to the list. On a finished photo with motion, click the spot that should stay sharp.',
+  noplay: 'the browser cannot show this video — frames come from the server',
+  file: (r) => `${r.format} · quality ${r.quality} · ${mb(r.bytes)} MB · ${r.w}×${r.h}`,
+  meta: (r) => `${fmt(r.t)} · ` + (r.ref === 0 ? 'the frame at the very moment: the sharpest near it'
+    : `the frame ${Math.abs(r.ref)} ${Math.abs(r.ref) === 1 ? 'frame' : 'frames'} ${r.ref > 0 ? 'later' : 'earlier'} (${shift(r.ref)} s)` +
+      (r.rel != null ? `: ${sharper(r.rel)} % sharper than the one at the moment` : '')) +
+    (r.depth < 1.5 ? ' · the neighbours did not match, noise left as is' : ` · noise cleaned over ~${Math.round(r.depth)} frames`) +
+    (r.soft ? ' · soft' : ''),
+  motion: 'Motion', motionHint: 'a long exposure up to the moment: what moves streaks, what stands still in the picture stays sharp',
+  expo: (s) => `exposure ${expo(s)} s`,
+  when: { before: 'before the moment', around: 'before and after', after: 'after the moment' },
+  mot: (r) => ` · motion ${expo(r.motion)} s ${T.when[r.when]}` + (r.focus ? ' · sharp at a point' : ''),
+  clickHint: 'click the photo: that spot becomes the sharp one',
+  bad: 'error: ',
+  lost: 'lost the connection to SharpFrame — its window closed? Run SharpFrame.bat and reload the page',
+};
+document.documentElement.lang = RU ? 'ru' : 'en';
+const $ = (id) => document.getElementById(id);
+for (const k of ['tagline', 'dropTitle', 'dropHint', 'take', 'add', 'clear', 'change']) $(k).textContent = T[k];
+$('softLabel').textContent = T.soft; $('softBox').title = T.softHint;
+$('motionLabel').textContent = T.motion; $('motionBox').title = T.motionHint;
+// the exposure slider: the usual shutter speeds, 1/60 s to 1 s
+const STOPS = [60, 50, 40, 30, 25, 20, 15, 13, 10, 8, 6, 5, 4, 3, 2, 1];
+const seconds = () => 1 / STOPS[$('expo').value];
+const expo = (s) => s >= 0.95 ? '1' : '1/' + Math.round(1 / s);
+const drawExpo = () => { $('expoLabel').textContent = T.expo(seconds()); $('expoBox').classList.toggle('hidden', !$('motion').checked); };
+for (const o of $('when').options) o.textContent = T.when[o.value];
+$('expo').oninput = drawExpo; $('motion').onchange = drawExpo; drawExpo();
+$('keys').innerHTML = T.keys;
+
+let info = null, upload = null, uploaded = false, fallback = false, fileName = '', t = 0;
+const fps = () => (info && info.fps) || 30;
+
+const mb = (b) => (b / 2 ** 20).toFixed(1);
+// for the card's line: 'кадр / кадра / кадров', the reference's shift in seconds, how much sharper it is
+const frames = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'кадр' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'кадра' : 'кадров');
+const shift = (n) => (n > 0 ? '+' : '−') + (Math.abs(n) / fps()).toFixed(2);
+const sharper = (rel) => Math.max(1, Math.round((1 / rel - 1) * 100));
+function fmt(s) {
+  const m = Math.floor(s / 60), r = s - 60 * m;
+  return `${m}:${r.toFixed(2).padStart(5, '0')}`;
+}
+function parse(s) {
+  let v = 0;
+  for (const p of s.trim().split(':')) { const x = parseFloat(p); if (isNaN(x)) return null; v = v * 60 + x; }
+  return v;
+}
+function status(msg, bad) { $('status').textContent = msg; $('status').className = 'status' + (bad ? ' bad' : ''); }
+
+function setTime(s, from) {
+  const dur = (info && info.dur) || $('video').duration || 1e9;
+  t = Math.min(Math.max(0, s), dur);
+  if (from !== 'field') $('time').value = fmt(t);
+  if (fallback) { if (from !== 'scrub') $('scrub').value = t; showPreview(); }
+  else if (from !== 'video') $('video').currentTime = t;
+}
+
+let previewTimer = null;
+function showPreview() {
+  if (!uploaded) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => { $('still').src = '/preview?t=' + t; }, 120);
+}
+
+function useFallback() {
+  if (fallback) return;
+  fallback = true;
+  $('video').classList.add('hidden'); $('still').classList.remove('hidden'); $('scrub').classList.remove('hidden');
+  if (info) $('scrub').max = info.dur;
+  status(T.noplay);
+  showPreview();
+}
+
+function pick(file) {
+  if (!file) return;
+  fileName = file.name; info = null; fallback = false; moments = []; drawList();
+  $('drop').classList.add('hidden'); $('work').classList.remove('hidden'); $('change').classList.remove('hidden');
+  $('video').classList.remove('hidden'); $('still').classList.add('hidden'); $('scrub').classList.add('hidden');
+  const v = $('video');
+  v.src = URL.createObjectURL(file);
+  v.onerror = useFallback;
+  v.onloadedmetadata = () => { if (!v.videoWidth) useFallback(); };
+  setTime(0);
+  uploaded = false;
+  upload = new Promise((done, fail) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', '/upload?name=' + encodeURIComponent(file.name));
+    x.upload.onprogress = (e) => { $('prog').value = e.loaded / e.total;
+      status(`${T.up} ${Math.round(100 * e.loaded / e.total)}%`); };
+    x.onload = () => {
+      const r = JSON.parse(x.responseText || '{}');
+      if (x.status !== 200) { status(T.bad + (r.error || x.status), true); return fail(new Error(r.error || x.status)); }
+      info = r; uploaded = true; $('prog').value = 1; $('scrub').max = r.dur; relabel();
+      status(fallback ? T.noplay : `${T.ready} · ${r.w}×${r.h} · ${r.fps.toFixed(2)} fps`);
+      if (fallback) showPreview();
+      done(r);
+    };
+    x.onerror = () => { status(T.bad + T.lost, true); fail(new Error(T.lost)); };
+    x.send(file);
+  });
+  upload.catch(() => {});   // reported in the status line; a photo waiting on it reports it too
+}
+
+// moments waiting to be taken; photos are made one after another anyway, on the server
+let moments = [];
+function drawList() {
+  $('list').classList.toggle('hidden', !moments.length);
+  $('takeAll').textContent = T.takeAll(moments.length);
+  $('chips').replaceChildren(...moments.map((m, i) => {
+    const c = document.createElement('span');
+    c.className = 'chip';
+    c.innerHTML = '<span></span><b>×</b>';
+    c.firstChild.textContent = fmt(m);
+    c.firstChild.onclick = () => { $('video').pause(); setTime(m); };
+    c.lastChild.onclick = () => { moments.splice(i, 1); drawList(); };
+    return c;
+  }));
+}
+function add() {
+  if (!upload) return;
+  const m = Math.round(t * 1000) / 1000;
+  if (!moments.some((x) => Math.abs(x - m) < 0.5 / fps())) moments.push(m);
+  moments.sort((a, b) => a - b);
+  drawList();
+}
+function takeAll() {
+  // the batch goes in on top in time order, each card under the one before, and is made top down
+  let prev = null;
+  for (const m of moments) take(m, null, (card) => { if (prev) prev.after(card); else $('results').prepend(card); prev = card; });
+  moments = []; drawList();
+}
+
+// `opt` pins the switches (a re-take from a photo keeps its own); else they are read off the page
+// the loupe: the photo at 100 % (at least twice as shown) in its own place, the spot clicked
+// under the pointer. Dragged to look round, so the view stays put on the way to the buttons;
+// a click without dragging leaves it; Space held shows the frame as is at the same spot.
+let zoomed = null;
+function loupe(pic, on, e) {
+  if (zoomed && zoomed !== pic) loupe(zoomed, false);
+  const img = pic.querySelector('img');
+  if (!on) {
+    pic.classList.remove('zoom'); pic.style.height = ''; img.style.width = ''; zoomed = null;
+    pic.onpointerdown = pic.onpointermove = pic.onpointerup = null;
+    return;
+  }
+  const b = img.getBoundingClientRect();
+  const fx = e ? (e.clientX - b.left) / b.width : .5, fy = e ? (e.clientY - b.top) / b.height : .5;
+  pic.style.height = b.height + 'px';     // the card keeps its size
+  pic.classList.add('zoom'); zoomed = pic;
+  img.style.width = Math.max(img.naturalWidth, 2 * b.width) + 'px';
+  // the spot clicked stays under the pointer (the box's middle for the button)
+  const ox = e ? e.clientX - b.left : pic.clientWidth / 2, oy = e ? e.clientY - b.top : pic.clientHeight / 2;
+  pic.scrollLeft = fx * img.clientWidth - ox;
+  pic.scrollTop = fy * img.clientHeight - oy;
+  let drag = null;
+  pic.dragged = false;
+  pic.onpointerdown = (ev) => { drag = [ev.clientX, ev.clientY, pic.scrollLeft, pic.scrollTop]; pic.dragged = false;
+    pic.setPointerCapture(ev.pointerId); ev.preventDefault(); };
+  pic.onpointermove = (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag[0], dy = ev.clientY - drag[1];
+    if (Math.abs(dx) + Math.abs(dy) > 3) pic.dragged = true;
+    pic.scrollLeft = drag[2] - dx; pic.scrollTop = drag[3] - dy;
+  };
+  // a press let go without dragging leaves; the click that follows it must not zoom in again
+  pic.onpointerup = () => { drag = null; if (!pic.dragged) { loupe(pic, false); pic.leftAt = Date.now(); } };
+}
+
+// photos are made one at a time, in the order asked for: each waits for the one before it
+let queue = Promise.resolve();
+const pending = [];     // the labels of the cards still waiting, oldest first
+const relabel = () => pending.forEach((label, i) => label(uploaded ? T.queued(i + 1) : T.waitUp));
+
+// `place` puts the new card on the page: on top unless given
+async function take(at = t, opt = null, place = null) {
+  if (!upload) return;
+  opt = opt || { soft: $('soft').checked, motion: $('motion').checked ? seconds() : 0, when: $('when').value, focus: null };
+  const card = document.createElement('div');
+  card.className = 'card panel';
+  card.innerHTML = `<div class="wait"><div><div class="spin"></div><span>${uploaded ? T.working : T.waitUp}</span></div></div>
+    <div class="bar"><span class="meta"></span></div>`;
+  card.querySelector('.meta').textContent = `${fmt(at)} · ${fileName}`;
+  if (place) place(card); else $('results').prepend(card);
+  const label = (text) => { const e = card.querySelector('.wait span'); if (e) e.textContent = text; };
+  const before = queue;
+  let done;
+  queue = new Promise((r) => { done = r; });
+  pending.push(label); relabel();
+  try {
+    await upload;
+    await before;
+    pending.splice(pending.indexOf(label), 1); relabel();
+    label(T.working);
+    const res = await fetch('/still', { method: 'POST', body: JSON.stringify({ t: at, ...opt }) }).catch(() => { throw new Error(T.lost); });
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.error || res.status);
+    card.innerHTML = `<div class="pic"><img alt=""></div>
+      <div class="bar"><span class="grow"><b class="file"></b><br><span class="meta"></span></span>
+      <button class="loupe"></button><button class="asis"></button><a class="btn save main"></a></div>`;
+    const img = card.querySelector('img');
+    img.src = `/img/${r.id}.jpg`;
+    card.querySelector('.file').textContent = T.file(r);
+    card.querySelector('.meta').textContent = T.meta(r) + (r.motion ? T.mot(r) + ' · ' + T.clickHint : '');
+    const s = card.querySelector('.save');
+    s.textContent = T.save; s.href = img.src; s.download = r.name;
+    s.style.cssText = 'background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:600';
+    const a = card.querySelector('.asis');
+    a.textContent = T.asis;
+    // hold to see the plain frame at the moment, let go for the photo
+    const show = (on) => { img.src = on ? `/img/${r.id}f.jpg` : `/img/${r.id}.jpg`; };
+    card.querySelector('.pic').show = show;     // Space in the loupe
+    a.onpointerdown = () => show(true);
+    for (const e of ['pointerup', 'pointerleave', 'pointercancel']) a.addEventListener(e, () => show(false));
+    const pic = card.querySelector('.pic'), lb = card.querySelector('.loupe');
+    lb.textContent = T.loupe; lb.title = T.loupeHint;
+    lb.onclick = () => loupe(pic, !pic.classList.contains('zoom'));
+    if (!r.motion) {
+      img.onclick = (e) => { if (!pic.classList.contains('zoom') && Date.now() - (pic.leftAt || 0) > 400) loupe(pic, true, e); };
+    } else {
+      // the spot clicked stays sharp: the same moment again, the frames following that spot
+      card.classList.add('motion');
+      if (r.focus) {
+        const ring = document.createElement('div');
+        ring.className = 'ring';
+        ring.style.left = 100 * r.focus[0] + '%'; ring.style.top = 100 * r.focus[1] + '%';
+        card.querySelector('.pic').append(ring);
+      }
+      img.onclick = (e) => {
+        if (pic.classList.contains('zoom') || Date.now() - (pic.leftAt || 0) < 400) return;
+        const b = img.getBoundingClientRect();
+        take(r.t, { soft: r.soft, motion: r.motion, when: r.when, focus: [(e.clientX - b.left) / b.width, (e.clientY - b.top) / b.height] });
+      };
+    }
+  } catch (e) {
+    card.querySelector('.wait').innerHTML = `<span class="status bad">${T.bad}${e.message || e}</span>`;
+  } finally {
+    if (pending.includes(label)) { pending.splice(pending.indexOf(label), 1); relabel(); }
+    done();
+  }
+}
+
+const drop = $('drop');
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); pick(e.dataTransfer.files[0]); });
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); });
+$('file').onchange = (e) => pick(e.target.files[0]);
+$('change').onclick = () => { $('file').value = ''; $('file').click(); };
+
+$('video').addEventListener('timeupdate', () => setTime($('video').currentTime, 'video'));
+$('video').addEventListener('seeked', () => setTime($('video').currentTime, 'video'));
+$('scrub').addEventListener('input', () => setTime(parseFloat($('scrub').value), 'scrub'));
+$('time').addEventListener('change', () => { const v = parse($('time').value); if (v != null) setTime(v, 'field'); $('time').value = fmt(t); });
+$('back').onclick = () => { $('video').pause(); setTime(t - 1 / fps()); };
+$('fwd').onclick = () => { $('video').pause(); setTime(t + 1 / fps()); };
+$('take').onclick = () => take();
+$('add').onclick = add;
+$('takeAll').onclick = takeAll;
+$('clear').onclick = () => { moments = []; drawList(); };
+document.addEventListener('keyup', (e) => { if (e.key === ' ' && zoomed) { e.preventDefault(); zoomed.show(false); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && zoomed) return loupe(zoomed, false);
+  if (e.key === ' ' && zoomed) { e.preventDefault(); if (!e.repeat) zoomed.show(true); return; }
+  if ($('work').classList.contains('hidden') || e.target === $('time')) return;
+  if (e.key === ',') $('back').click();
+  else if (e.key === '.') $('fwd').click();
+  else if (e.key === 'Enter') { e.preventDefault(); take(); }
+  else if (e.key === '+' || e.key === '=') add();
+});
+</script>
+</body>
+</html>

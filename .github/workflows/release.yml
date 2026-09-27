@@ -1,0 +1,51 @@
+# Release on a version tag: git tag -a v1.0 -m "notes…" && git push origin v1.0
+# Builds the portable zip with build_zip.ps1 on Windows (embedded Python + requirements.txt)
+# and publishes a GitHub release with it attached. The release text is the tag's annotation.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # checkout turns an annotated tag into a lightweight one: fetch it again for its message
+      - name: Release notes from the tag
+        shell: bash
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > notes.md
+          cat notes.md
+
+      # 3.11: build_zip.ps1 puts the packages into an embedded Python 3.11
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the zip
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python -m pip install --disable-pip-version-check -r requirements.txt
+          .\build_zip.ps1
+          Move-Item dist\SharpFrame.zip "dist\SharpFrame-$env:GITHUB_REF_NAME.zip"
+
+      # the zip must run: its own Python imports the packages and both scripts
+      - name: Check the zip
+        shell: pwsh
+        run: |
+          Expand-Archive "dist\SharpFrame-$env:GITHUB_REF_NAME.zip" check
+          check\SharpFrame\python\python.exe -c "import sys; sys.path.insert(0, 'check/SharpFrame'); import av, cv2, numpy, sharpframe, web; print('ok', cv2.__version__)"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: SharpFrame ${{ github.ref_name }}
+          body_path: notes.md
+          files: dist/SharpFrame-*.zip
