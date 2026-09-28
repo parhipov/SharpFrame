@@ -12,6 +12,7 @@
     "sharpen_amount": 0.6,
     "sharpen_radius_px": 1.0,
     "lut_file": "",
-    "save_single_frame": false
+    "save_single_frame": false,
+    "passthrough": false
   }
 }

@@ -134,6 +134,7 @@ const T = RU ? {
   keys: 'Найдите момент и нажмите «Сделать фото». <kbd>,</kbd> <kbd>.</kbd> — кадр назад / вперёд, <kbd>Enter</kbd> — фото, <kbd>+</kbd> — в список. На готовом фото с движением щёлкните место, которое должно остаться резким.',
   noplay: 'браузер не показывает это видео — кадры с сервера',
   file: (r) => `${r.format} · качество ${r.quality} · ${mb(r.bytes)} МБ · ${r.w}×${r.h}`,
+  pass: (r) => `${fmt(r.t)} · кадр как декодирован, без обработки (passthrough в sharpframe.json)`,
   meta: (r) => `${fmt(r.t)} · ` + (r.ref === 0 ? 'взят кадр ровно в этот момент: он самый резкий рядом'
     : `взят кадр на ${Math.abs(r.ref)} ${frames(Math.abs(r.ref))} ${r.ref > 0 ? 'позже' : 'раньше'} (${shift(r.ref)} с)` +
       (r.rel != null ? `: он на ${sharper(r.rel)} % резче кадра в момент` : '')) +
@@ -156,6 +157,7 @@ const T = RU ? {
   keys: 'Find the moment and press “Take photo”. <kbd>,</kbd> <kbd>.</kbd> — frame back / forward, <kbd>Enter</kbd> — photo, <kbd>+</kbd> — to the list. On a finished photo with motion, click the spot that should stay sharp.',
   noplay: 'the browser cannot show this video — frames come from the server',
   file: (r) => `${r.format} · quality ${r.quality} · ${mb(r.bytes)} MB · ${r.w}×${r.h}`,
+  pass: (r) => `${fmt(r.t)} · the frame as decoded, nothing done (passthrough in sharpframe.json)`,
   meta: (r) => `${fmt(r.t)} · ` + (r.ref === 0 ? 'the frame at the very moment: the sharpest near it'
     : `the frame ${Math.abs(r.ref)} ${Math.abs(r.ref) === 1 ? 'frame' : 'frames'} ${r.ref > 0 ? 'later' : 'earlier'} (${shift(r.ref)} s)` +
       (r.rel != null ? `: ${sharper(r.rel)} % sharper than the one at the moment` : '')) +
@@ -355,7 +357,7 @@ async function take(at = t, opt = null, place = null) {
     const img = card.querySelector('img');
     img.src = `/img/${r.id}.jpg`;
     card.querySelector('.file').textContent = T.file(r);
-    card.querySelector('.meta').textContent = T.meta(r) + (r.motion ? T.mot(r) + ' · ' + T.clickHint : '');
+    card.querySelector('.meta').textContent = r.passthrough ? T.pass(r) : T.meta(r) + (r.motion ? T.mot(r) + ' · ' + T.clickHint : '');
     const s = card.querySelector('.save');
     s.textContent = T.save; s.href = img.src; s.download = r.name;
     s.style.cssText = 'background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:600';

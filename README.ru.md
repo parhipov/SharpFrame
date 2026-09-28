@@ -102,6 +102,7 @@ python sharpframe.py clip.mp4 83.6 --motion-seconds 0.125 --motion-focus 0.65,0.
 | `sharpen_amount`, `sharpen_radius_px` | повышение резкости (unsharp mask); `0` = выкл. (0.6, 1 пкс) |
 | `lut_file` | цветовой LUT `.cube` при декодировании, например лог-профиль в Rec.709; `""` = нет |
 | `save_single_frame` | ещё и самый резкий кадр отдельно (`<имя>_single_frame`) — видно, что дало слияние |
+| `passthrough` | для тестов: кадр в момент как он декодирован (с LUT), без всякой обработки (`<имя>_passthrough`) |
 
 ## Как это работает
 

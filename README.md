@@ -102,6 +102,7 @@ video and the times, and its own `options` over those; the command line (with da
 | `sharpen_amount`, `sharpen_radius_px` | unsharp mask; `0` = off (0.6, 1 px) |
 | `lut_file` | `.cube` colour LUT applied at decode, e.g. a log profile to Rec.709; `""` = none |
 | `save_single_frame` | also save the sharpest frame alone (`<name>_single_frame`), to see what merging gave |
+| `passthrough` | for tests: the frame at the time as decoded (LUT included), nothing else done (`<name>_passthrough`) |
 
 ## How it works
 

@@ -150,7 +150,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             a.motion_when = req['when']
         if 'focus' in req:
             a.motion_focus = '%g,%g' % tuple(req['focus']) if req['focus'] else ''
-        wnd = sf.window(t, v['fps'], v['dur'], a.search_window_seconds)
+        wnd = sf.window(t, v['fps'], v['dur'], 0 if a.passthrough else a.search_window_seconds)
         if wnd is None:
             return self.fail('outside the clip')
         c, first, count = wnd
@@ -161,17 +161,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not frames:
                 return self.fail('no frames decoded there')
             at = min(c - first, len(frames) - 1)
-            img, _, info = sf.still(frames, at, a, blur=sf.motion_stage(a, v['path'], first, v['fps'], v['w'], v['h'], v['color']))
+            if a.passthrough:   # sharpframe.json's test mode: the frame as decoded
+                a.soft, a.motion_seconds = False, 0
+                img, info = frames[at].astype('float32'), dict(ref=0, rel=1.0, merged=1, depth=1.0)
+            else:
+                img, _, info = sf.still(frames, at, a, blur=sf.motion_stage(a, v['path'], first, v['fps'], v['w'],
+                                                                            v['h'], v['color']))
             key = uuid.uuid4().hex[:12]
             results[key] = sf.jpeg(img, QUALITY)
             results[key + 'f'] = sf.jpeg(frames[at].astype('float32'), 92)  # as a player shows it
         for k in list(results)[:-2 * KEEP]:
             del results[k]
         stem = os.path.splitext(v['name'])[0]
-        name = '%s_%s%s%s.jpg' % (stem, sf.time_label(t), '_soft' if a.soft else '', sf.motion_suffix(a))
+        name = '%s_%s%s%s%s.jpg' % (stem, sf.time_label(t), '_soft' if a.soft else '', sf.motion_suffix(a),
+                                    '_passthrough' if a.passthrough else '')
         self.reply(200, dict(info, id=key, t=t, name=name, soft=a.soft, w=v['w'], h=v['h'],
                              motion=a.motion_seconds, when=a.motion_when, focus=sf.parse_focus(a.motion_focus),
-                             format='JPEG', quality=QUALITY, bytes=len(results[key])))
+                             passthrough=a.passthrough, format='JPEG', quality=QUALITY, bytes=len(results[key])))
 
     def preview(self, t):
         """One frame near t, small: for a video the browser cannot play itself."""

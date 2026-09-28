@@ -26,6 +26,7 @@ For each time:
   5. sharpen.
 
 Writes <stem>_<time>.jpg next to the video, in <stem>_stills/.
+--passthrough skips 2-5: the frame at the time as decoded, for tests.
 """
 import argparse
 import json
@@ -656,6 +657,9 @@ def parser():
     ap.add_argument('--save-single-frame', action='store_true',
                     help='also save the sharpest frame alone (<name>_single_frame), processed the same way, '
                          'to compare with the merged still')
+    ap.add_argument('--passthrough', action='store_true',
+                    help='for tests: save the frame at the time as decoded (LUT included), no search, merge, '
+                         'motion or sharpening (<name>_passthrough)')
     ap.add_argument('--open-folder', action='store_true', help='open the output folder at the end (Windows)')
     if os.path.isfile(DEFAULTS):
         job_options(ap, DEFAULTS)
@@ -690,12 +694,13 @@ def main():
     stem = os.path.splitext(os.path.basename(args.video))[0]
     out = args.output_folder or os.path.join(os.path.dirname(os.path.abspath(args.video)), stem + '_stills')
     os.makedirs(out, exist_ok=True)
-    print('%s: %dx%d, %.3f fps, %.2f s, %s %s; window +-%d frames'
-          % (stem, w, h, fps, dur or 0, color[2], color[0], int(round(args.search_window_seconds * fps))))
+    print('%s: %dx%d, %.3f fps, %.2f s, %s %s; %s'
+          % (stem, w, h, fps, dur or 0, color[2], color[0], 'passthrough' if args.passthrough else
+             'window +-%d frames' % int(round(args.search_window_seconds * fps))))
 
     jobs = []
     for t in times:
-        wnd = window(t, fps, dur, args.search_window_seconds)
+        wnd = window(t, fps, dur, 0 if args.passthrough else args.search_window_seconds)
         if wnd is None:
             print('%s: outside the clip, skipped' % t)
         else:
@@ -718,6 +723,11 @@ def main():
         pending = decode(jobs[k + 1]) if k + 1 < len(jobs) else None
         if not frames:
             print('%s: no frames decoded, skipped' % t)
+            continue
+        if args.passthrough:
+            name = '%s_%s_passthrough' % (stem, time_label(t))
+            save(frames[0].astype(np.float32), os.path.join(out, name + '.jpg'))
+            print('    -> %s.jpg  (%.1f s)' % (name, time.time() - t0))
             continue
         img, single, info = still(frames, c - first, args, blur=motion_stage(args, args.video, first, fps, w, h, color))
         name = '%s_%s%s' % (stem, time_label(t), motion_suffix(args))
