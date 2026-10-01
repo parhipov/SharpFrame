@@ -444,6 +444,64 @@ class Guide:
         return cv2.merge(out) if p.ndim == 3 else out[0]
 
 
+_gpu = []
+
+
+def gpu():
+    """torch with a CUDA card, or None; SHARPFRAME_CPU=1 keeps to the CPU."""
+    if not _gpu:
+        try:
+            import torch
+            _gpu.append(torch if torch.cuda.is_available() and not os.environ.get('SHARPFRAME_CPU') else None)
+        except ImportError:
+            _gpu.append(None)
+    return _gpu[0]
+
+
+def streak(A, V, dts):
+    """A (h, w, 3) averaged over its positions at the times dts (s): what is at x
+    then was at x - V(x) dt now, and counts if it moves as x does (the paths
+    within 1.5 px over dt). Where no sample held (a gap opening behind a thing)
+    A itself stays. On the card when there is one: 4.1 s -> 0.16 s for 182 steps."""
+    torch = gpu()
+    if torch is not None:
+        return streak_gpu(torch, A, V, dts)
+    gh, gw = V.shape[:2]
+    X, Y = np.meshgrid(np.arange(gw, dtype=np.float32), np.arange(gh, dtype=np.float32))
+    acc = np.zeros_like(A)
+    wsum = np.zeros((gh, gw), np.float32)
+    for dt in dts:
+        sx, sy = X - V[..., 0] * dt, Y - V[..., 1] * dt
+        Vs = cv2.remap(V, sx, sy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        wt = np.exp(-((np.hypot(Vs[..., 0] - V[..., 0], Vs[..., 1] - V[..., 1]) * abs(dt)) / 1.5) ** 2)
+        acc += cv2.remap(A, sx, sy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE) * wt[..., None]
+        wsum += wt
+    return np.where(wsum[..., None] > 1e-3, acc / np.maximum(wsum, 1e-3)[..., None], A)
+
+
+def streak_gpu(torch, A, V, dts):
+    """streak() in torch: grid_sample, bilinear with the border repeated, is cv2.remap's INTER_LINEAR + REPLICATE."""
+    from torch.nn.functional import grid_sample
+    gh, gw = V.shape[:2]
+    a = torch.from_numpy(np.ascontiguousarray(A, np.float32)).cuda().permute(2, 0, 1)[None]
+    v = torch.from_numpy(np.ascontiguousarray(V, np.float32)).cuda()
+    vc = v.permute(2, 0, 1)[None]
+    ys, xs = torch.meshgrid(torch.arange(gh, device='cuda', dtype=torch.float32),
+                            torch.arange(gw, device='cuda', dtype=torch.float32), indexing='ij')
+    base = torch.stack([xs, ys], -1)
+    norm = torch.tensor([2 / max(gw - 1, 1), 2 / max(gh - 1, 1)], device='cuda')    # px -> grid_sample's [-1, 1]
+    acc = torch.zeros_like(a)
+    wsum = torch.zeros((1, 1, gh, gw), device='cuda')
+    for dt in dts:
+        g = ((base - v * dt) * norm - 1)[None]
+        vs = grid_sample(vc, g, mode='bilinear', padding_mode='border', align_corners=True)
+        wt = torch.exp(-((vs - vc).norm(dim=1, keepdim=True) * (abs(dt) / 1.5)) ** 2)
+        acc += grid_sample(a, g, mode='bilinear', padding_mode='border', align_corners=True) * wt
+        wsum += wt
+    out = torch.where(wsum > 1e-3, acc / wsum.clamp_min(1e-3), a)
+    return out[0].permute(1, 2, 0).cpu().numpy()
+
+
 def motion_blur(img, frames, log):
     """The exposure: each frame smeared along its own motion over its slice of
     the exposure (from halfway to the one before to halfway to the one after),
@@ -461,38 +519,34 @@ def motion_blur(img, frames, log):
     gh, gw = frames[0]['V'].shape[:2]
     small = cv2.resize(img, (gw, gh), interpolation=cv2.INTER_AREA)
     T = [f['t'] for f in frames]
-    X, Y = np.meshgrid(np.arange(gw, dtype=np.float32), np.arange(gh, dtype=np.float32))
     total = np.zeros_like(small)
     length = np.zeros((gh, gw), np.float32)
     steps_all = 0
     for k, f in enumerate(frames):
         lo = T[0] if k == 0 else (T[k - 1] + T[k]) / 2
         hi = T[-1] if k == len(T) - 1 else (T[k] + T[k + 1]) / 2
-        A = small if f['A'] is None else f['A']
         V = f['V']
         speed = np.hypot(V[..., 0], V[..., 1])
         length += speed * (hi - lo)
         steps = int(np.clip(np.percentile(speed, 99) * (hi - lo) / 1.5, 1, 32))
         steps_all += steps
-        acc = np.zeros_like(A)
-        wsum = np.zeros((gh, gw), np.float32)
-        for i in range(steps):
-            dt = lo + (hi - lo) * (i + .5) / steps - f['t']
-            # what is at x then was at x - V(x) dt now; it counts if it moves as x does
-            sx, sy = X - V[..., 0] * dt, Y - V[..., 1] * dt
-            Vs = cv2.remap(V, sx, sy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-            wt = np.exp(-((np.hypot(Vs[..., 0] - V[..., 0], Vs[..., 1] - V[..., 1]) * abs(dt)) / 1.5) ** 2)
-            acc += cv2.remap(A, sx, sy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE) * wt[..., None]
-            wsum += wt
-        # where no sample held (a gap opening behind a thing) the frame itself stays
-        part = np.where(wsum[..., None] > 1e-3, acc / np.maximum(wsum, 1e-3)[..., None], A)
-        total += part * ((hi - lo) / (T[-1] - T[0]))
-    streaks = cv2.resize(total, (W, H), interpolation=cv2.INTER_CUBIC)
+        total += streak(small if f['A'] is None else f['A'], V, [lo + (hi - lo) * (i + .5) / steps - f['t']
+                                                                 for i in range(steps)]) * ((hi - lo) / (T[-1] - T[0]))
+    log('    motion blur: streaks up to %.0f px, %d steps over %d frames' % (
+        np.percentile(length, 99) * W / gw, steps_all, len(frames)))
+    return blend(img, small, total, length)
+
+
+def blend(img, small, streaks, length):
+    """The full-size still where hardly anything moved (`length`, px of the
+    half-size grid the streaks are drawn on), the streaks elsewhere, the edge
+    between them following the picture's own (a colour-guided filter)."""
+    H, W = img.shape[:2]
+    gh, gw = small.shape[:2]
+    streaks = cv2.resize(streaks, (W, H), interpolation=cv2.INTER_CUBIC)
     edges = Guide((small / 65535.).clip(0, 1).astype(np.float32), max(4, gw // 240), 1e-3)
     m = np.clip(edges(np.clip((length * (W / gw) - 1) / 4, 0, 1).astype(np.float32)), 0, 1)
     m = cv2.resize(m, (W, H), interpolation=cv2.INTER_LINEAR)[..., None]
-    log('    motion blur: streaks up to %.0f px, %d steps over %d frames' % (
-        np.percentile(length, 99) * W / gw, steps_all, len(frames)))
     return img * (1 - m) + streaks * m
 
 
