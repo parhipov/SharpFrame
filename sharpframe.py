@@ -78,7 +78,9 @@ def yuv420_to_rgb16(buf, w, h, matrix, full):
 
     Chroma is upsampled bicubically at its true position (HEVC default siting:
     co-sited with the left luma column, between two rows), like ffmpeg's
-    accurate path, but here frames convert in parallel.
+    accurate path, but here frames convert in parallel. Shrinking the planes
+    before converting is 5x faster at 4K -> 1280, but misses the clipping of
+    single full-size pixels: up to 21/255 off on saturated edges.
     """
     if (w, h) not in _chroma_maps:
         cx = np.arange(w, dtype=np.float32) / 2
@@ -94,7 +96,7 @@ def yuv420_to_rgb16(buf, w, h, matrix, full):
     u = cv2.remap(plane(buf[n:n + q], h // 2, w // 2), mx, my, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     v = cv2.remap(plane(buf[n + q:n + 2 * q], h // 2, w // 2), mx, my, cv2.INTER_CUBIC,
                   borderMode=cv2.BORDER_REPLICATE)
-    # codes -> Y' [0,1], Cb/Cr [-.5,.5] -> RGB, as one affine map applied by cv2.transform
+    # codes -> Y' [0,1], Cb/Cr [-.5,.5] -> RGB, one affine map
     ys, cs, y0 = (1023., 1023., 0.) if full else (876., 896., 64.)
     kr, kb = KR_KB[matrix]
     kg = 1 - kr - kb
@@ -103,11 +105,13 @@ def yuv420_to_rgb16(buf, w, h, matrix, full):
                   [1, 2 * (1 - kb), 0]])
     Sc = np.diag([1 / ys, 1 / cs, 1 / cs])
     off = -np.array([y0 / ys, 512 / cs, 512 / cs])
-    M = (65535. * np.hstack([A @ Sc, (A @ off)[:, None]])).astype(np.float32)
-    M[:, 3] += .5
-    rgb = cv2.transform(cv2.merge([y, u, v]), M)
-    np.clip(rgb, 0, 65535, out=rgb)
-    return rgb.astype(np.uint16)
+    M = 65535. * np.hstack([A @ Sc, (A @ off)[:, None]])
+    # each channel straight to uint16, cv2 rounding and clipping on the way: no float RGB
+    # to clip and convert, 4K 0.125 -> 0.096 s a frame at 6 threads
+    r = cv2.addWeighted(y, M[0, 0], v, M[0, 2], M[0, 3], dtype=cv2.CV_16U)
+    g = cv2.addWeighted(cv2.addWeighted(y, M[1, 0], u, M[1, 1], M[1, 3]), 1, v, M[1, 2], 0, dtype=cv2.CV_16U)
+    b = cv2.addWeighted(y, M[2, 0], u, M[2, 1], M[2, 3], dtype=cv2.CV_16U)
+    return cv2.merge([r, g, b])
 
 
 def planes420(frame, w, h):

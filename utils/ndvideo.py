@@ -37,6 +37,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 import sharpframe as sf  # noqa: E402
 
 SWS_CS = {'bt709': 'ITU709', 'bt601': 'ITU601', 'bt2020': 'BT2020'}
+# frames converted, smeared (DIS is single-threaded) and put together at once: half the CPU's threads, at
+# most 6; 4K, 60 frames: 301 s -> 114 s at 6, 125 s at 12 (+2 GB)
+THREADS = max(1, min(6, (os.cpu_count() or 2) // 2))
 
 
 def parse_shutter(s):
@@ -125,9 +128,9 @@ def frames_of(video, first, last, fps, w, h, color, lut, size):
     ~1 GB of frames at a time (2 GB ran out of memory beside another job); stops
     where the clip ends. Each chunk decodes from the keyframe before it (DJI: one
     a second): at 6 frames 4K decoded ~5x the frames it kept, at ~30 under 2x.
-    The next chunk decodes in the background while this one is worked on: 4K ->
-    1280 takes ~0.25 s a frame, as long as the rest of the work."""
+    The next chunk decodes in the background while this one is worked on."""
     k = int(np.clip(1e9 // max(w * h * 3, size[0] * size[1] * 6), 8, 250))     # 4:2:0 planes / RGB out
+    sf.WORKERS = THREADS
     chunks = [range(a, min(a + k, last + 1)) for a in range(first, last + 1, k)]
     read = lambda want: sf.decode(video, want, fps, w, h, color, lut, None if size == (w, h) else size)
     with ThreadPoolExecutor(1) as ex:
@@ -233,31 +236,47 @@ def main():
     started = time.time()
     total = len(outs)
     done = 0
-    refs, half, L, P = {}, {}, {}, {}   # by frame: (reference, its half size); half size; luma; halves()
+    refs, half, L, P = {}, {}, {}, {}   # by frame: (reference, its half size); half size; luma; halves() to come
+    smears, exposures = ThreadPoolExecutor(THREADS), ThreadPoolExecutor(THREADS)     # the 2nd waits on the 1st
+    ready = []      # the output frames on their way, in order
 
-    def emit(n):
-        nonlocal done
-        ref, small = refs.pop(n)
-        win = [m for m in range(n - nb, n + na + 1) if m in P]
+    def smear(m):
+        A, near = half.pop(m), {k: L[k] for k in (m - 1, m, m + 1) if k in L}
+        P[m] = smears.submit(lambda: halves(A, velocity(near, m, fps), fps))
+
+    def expose(n, ref, small, win):
         img = ref.astype(np.float32)
         if len(win) > 1:
+            got = {m: f.result() for m, f in win.items()}
             # the half slices from the first frame's time to the last's, each 1/(2 * frames between) of the exposure
-            a_, b_ = win[0], win[-1]
-            streaks = P[a_][1] + P[b_][0] + sum(P[m][0] + P[m][1] for m in win[1:-1])
-            length = P[a_][2] + P[b_][2] + 2 * sum(P[m][2] for m in win[1:-1])
+            a_, b_ = min(got), max(got)
+            inner = [m for m in got if a_ < m < b_]
+            streaks = got[a_][1] + got[b_][0] + sum(got[m][0] + got[m][1] for m in inner)
+            length = got[a_][2] + got[b_][2] + 2 * sum(got[m][2] for m in inner)
             img = sf.blend(img, small, streaks / (2 * (b_ - a_)), length)
             log('    %d frames, streaks up to %.0f px' % (len(win), np.percentile(length, 99) * size[0] / small.shape[1]))
         rgb = av.VideoFrame.from_ndarray(np.clip(img + .5, 0, 65535).astype(np.uint16), format='rgb48le')
         f = rgb.reformat(format=vs.pix_fmt, src_colorspace=cs, dst_colorspace=cs,
                          src_color_range='JPEG', dst_color_range=rng)
         f.pts, f.time_base = pts_of[n], tb
-        for p in vs.encode(f):
-            out.mux(p)
-        done += 1
-        el = time.time() - started
-        left = el / done * (total - done)
-        print('\r  %d/%d frames, %.2f s a frame, about %d:%02d left   '
-              % (done, total, el / done, left // 60, left % 60), end='', flush=True)
+        return f
+
+    def emit(n):
+        ref, small = refs.pop(n)
+        win = {m: P[m] for m in range(n - nb, n + na + 1) if m in P}
+        ready.append(exposures.submit(expose, n, ref, small, win))
+        write(THREADS)
+
+    def write(keep):
+        nonlocal done
+        while len(ready) > keep or ready and ready[0].done():
+            for p in vs.encode(ready.pop(0).result()):
+                out.mux(p)
+            done += 1
+            el = time.time() - started
+            left = el / done * (total - done)
+            print('\r  %d/%d frames, %.2f s a frame, about %d:%02d left   '
+                  % (done, total, el / done, left // 60, left % 60), end='', flush=True)
 
     # from the frame before the first exposure (its flow) to the one after the last
     nxt, j = n0, None
@@ -267,8 +286,8 @@ def main():
         if j in pts_of:
             refs[j] = (rgb, half[j])
         if j - 1 >= n0 - nb and j - 1 in L:
-            P[j - 1] = halves(half.pop(j - 1), velocity(L, j - 1, fps), fps)
-        while nxt < n1 and nxt + na < j:        # its exposure's halves are all there
+            smear(j - 1)
+        while nxt < n1 and nxt + na < j:        # its exposure's halves are all on their way
             if nxt in refs:
                 emit(nxt)
             nxt += 1
@@ -276,10 +295,13 @@ def main():
                 for m in [m for m in d if m < nxt - nb - 1]:
                     del d[m]
     if j is not None and j not in P and j in half:
-        P[j] = halves(half.pop(j), velocity(L, j, fps), fps)
+        smear(j)
     for n in range(nxt, n1):
         if n in refs:
             emit(n)
+    write(0)
+    smears.shutdown()
+    exposures.shutdown()
     for p in vs.encode(None):
         out.mux(p)
     out.close()
